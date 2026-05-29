@@ -423,8 +423,8 @@ export function GraffitiCanvas() {
         height={LOGICAL_H}
         className="fixed left-0 w-screen z-20"
         style={{
-          top: '33.333vh',
-          height: '66.667vh',
+          top: '20vh',
+          height: '80vh',
           cursor: placementMode ? 'crosshair' : tool === 'text' ? 'text' : 'default',
           touchAction: 'none',
         }}
