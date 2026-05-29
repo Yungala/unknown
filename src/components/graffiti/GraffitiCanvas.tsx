@@ -8,7 +8,7 @@ const LOGICAL_H = 1080;
 const CHANNEL_NAME = 'graffiti-wall';
 const FONT_SIZES: Record<Thickness, number> = { 2: 28, 6: 52, 14: 100 };
 
-function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke | StrokeInsert) {
+function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke) {
   if (stroke.points.length < 2) return;
   ctx.save();
   ctx.strokeStyle = stroke.color;
