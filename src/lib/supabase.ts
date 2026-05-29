@@ -36,3 +36,21 @@ export interface GraffitiImageInsert {
   width: number;
   height: number;
 }
+
+export interface GraffitiText {
+  id: string;
+  content: string;
+  x: number;
+  y: number;
+  color: string;
+  font_size: number;
+  created_at: string;
+}
+
+export interface GraffitiTextInsert {
+  content: string;
+  x: number;
+  y: number;
+  color: string;
+  font_size: number;
+}

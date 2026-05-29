@@ -10,15 +10,19 @@ export const PALETTE = COLORS;
 export const THICKNESSES = [2, 6, 14] as const;
 export type Thickness = (typeof THICKNESSES)[number];
 
+export type Tool = 'brush' | 'text';
+
 interface DrawingStore {
   color: string;
   thickness: Thickness;
+  tool: Tool;
   isConnected: boolean;
   presenceCount: number;
   isUploadMode: boolean;
   pendingImageFile: File | null;
   setColor: (color: string) => void;
   setThickness: (thickness: Thickness) => void;
+  setTool: (tool: Tool) => void;
   setConnected: (connected: boolean) => void;
   setPresenceCount: (count: number) => void;
   setUploadMode: (mode: boolean) => void;
@@ -28,12 +32,14 @@ interface DrawingStore {
 export const useDrawingStore = create<DrawingStore>((set) => ({
   color: '#EF4444',
   thickness: 6,
+  tool: 'brush',
   isConnected: true,
   presenceCount: 1,
   isUploadMode: false,
   pendingImageFile: null,
   setColor: (color) => set({ color }),
   setThickness: (thickness) => set({ thickness }),
+  setTool: (tool) => set({ tool }),
   setConnected: (isConnected) => set({ isConnected }),
   setPresenceCount: (presenceCount) => set({ presenceCount }),
   setUploadMode: (isUploadMode) => set({ isUploadMode }),

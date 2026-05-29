@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { ImageIcon } from 'lucide-react';
+import { ImageIcon, Type } from 'lucide-react';
 import { PALETTE, THICKNESSES, type Thickness, useDrawingStore } from '@/stores/drawing-store';
 
 const COLOR_NAMES: Record<string, string> = {
@@ -15,7 +15,7 @@ interface DrawingToolbarProps {
 }
 
 export function DrawingToolbar({ onImageSelected }: DrawingToolbarProps) {
-  const { color, thickness, isUploadMode, setColor, setThickness } = useDrawingStore();
+  const { color, thickness, tool, isUploadMode, setColor, setThickness, setTool } = useDrawingStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -70,6 +70,20 @@ export function DrawingToolbar({ onImageSelected }: DrawingToolbarProps) {
           </button>
         ))}
       </div>
+
+      <div className="w-px h-6 bg-white/20" />
+
+      {/* 텍스트 도구 */}
+      <button
+        aria-label="텍스트"
+        title="텍스트"
+        onClick={() => setTool(tool === 'text' ? 'brush' : 'text')}
+        className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+          tool === 'text' ? 'bg-white text-black' : 'text-white hover:bg-white/20'
+        }`}
+      >
+        <Type size={16} />
+      </button>
 
       <div className="w-px h-6 bg-white/20" />
 

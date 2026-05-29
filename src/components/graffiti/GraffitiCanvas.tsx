@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { supabase, type GraffitiImage, type Stroke, type StrokeInsert } from '@/lib/supabase';
-import { useDrawingStore } from '@/stores/drawing-store';
+import { supabase, type GraffitiImage, type GraffitiText, type Stroke, type StrokeInsert } from '@/lib/supabase';
+import { useDrawingStore, type Thickness } from '@/stores/drawing-store';
 
 const LOGICAL_W = 1920;
 const LOGICAL_H = 1080;
 const CHANNEL_NAME = 'graffiti-wall';
+const FONT_SIZES: Record<Thickness, number> = { 2: 28, 6: 52, 14: 100 };
 
 function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke | StrokeInsert) {
   if (stroke.points.length < 2) return;
@@ -23,28 +24,50 @@ function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke | StrokeInsert
   ctx.restore();
 }
 
-async function drawImage(ctx: CanvasRenderingContext2D, img: GraffitiImage) {
-  return new Promise<void>((resolve) => {
+async function preloadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve) => {
     const el = new Image();
-    el.onload = () => {
-      ctx.save();
-      ctx.drawImage(el, img.x - img.width / 2, img.y - img.height / 2, img.width, img.height);
-      ctx.restore();
-      resolve();
-    };
-    el.onerror = () => resolve();
-    el.src = img.url;
+    el.onload = () => resolve(el);
+    el.onerror = () => resolve(el);
+    el.src = url;
   });
+}
+
+function drawImageEl(ctx: CanvasRenderingContext2D, el: HTMLImageElement, img: GraffitiImage) {
+  if (!el.naturalWidth) return;
+  ctx.save();
+  ctx.drawImage(el, img.x - img.width / 2, img.y - img.height / 2, img.width, img.height);
+  ctx.restore();
+}
+
+async function drawImage(ctx: CanvasRenderingContext2D, img: GraffitiImage) {
+  const el = await preloadImage(img.url);
+  drawImageEl(ctx, el, img);
+}
+
+function drawText(ctx: CanvasRenderingContext2D, text: GraffitiText) {
+  ctx.save();
+  ctx.fillStyle = text.color;
+  ctx.font = `bold ${text.font_size}px sans-serif`;
+  ctx.textBaseline = 'top';
+  ctx.fillText(text.content, text.x, text.y);
+  ctx.restore();
 }
 
 export function GraffitiCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const { color, thickness, setConnected, setPresenceCount, setUploadMode, setPendingImageFile, pendingImageFile } = useDrawingStore();
+  const { color, thickness, tool, setConnected, setPresenceCount, setUploadMode, setPendingImageFile, pendingImageFile } = useDrawingStore();
   const isDrawing = useRef(false);
   const currentPoints = useRef<{ x: number; y: number }[]>([]);
   const localStrokeIds = useRef(new Set<string>());
   const localImageIds = useRef(new Set<string>());
+  const localTextIds = useRef(new Set<string>());
+
+  const [textInput, setTextInput] = useState<{
+    logX: number; logY: number; screenX: number; screenY: number; value: string;
+  } | null>(null);
+  const textEscaped = useRef(false);
 
   const [placementMode, setPlacementMode] = useState(false);
   const [ghostPos, setGhostPos] = useState<{ x: number; y: number } | null>(null);
@@ -70,23 +93,42 @@ export function GraffitiCanvas() {
       c.fillStyle = '#1c1917';
       c.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
 
-      const [strokesRes, imagesRes] = await Promise.all([
+      const [strokesRes, imagesRes, textsRes] = await Promise.all([
         supabase.from('strokes').select('*').order('created_at'),
         supabase.from('images').select('*').order('created_at'),
+        supabase.from('texts').select('*').order('created_at'),
       ]);
 
       const strokes: Stroke[] = strokesRes.data ?? [];
       const images: GraffitiImage[] = imagesRes.data ?? [];
+      const texts: GraffitiText[] = textsRes.data ?? [];
 
-      type Item = { type: 'stroke'; data: Stroke } | { type: 'image'; data: GraffitiImage };
+      // 이미지 모두 병렬 프리로드
+      const imageElMap = new Map(
+        await Promise.all(
+          images.map(async (img) => [img.id, await preloadImage(img.url)] as const)
+        )
+      );
+
+      type Item =
+        | { type: 'stroke'; data: Stroke }
+        | { type: 'image'; data: GraffitiImage }
+        | { type: 'text'; data: GraffitiText };
+
       const items: Item[] = [
         ...strokes.map((s) => ({ type: 'stroke' as const, data: s })),
         ...images.map((img) => ({ type: 'image' as const, data: img })),
+        ...texts.map((t) => ({ type: 'text' as const, data: t })),
       ].sort((a, b) => a.data.created_at.localeCompare(b.data.created_at));
 
       for (const item of items) {
         if (item.type === 'stroke') drawStroke(c, item.data);
-        else await drawImage(c, item.data);
+        else if (item.type === 'image') {
+          const el = imageElMap.get(item.data.id);
+          if (el) drawImageEl(c, el, item.data);
+        } else {
+          drawText(c, item.data);
+        }
       }
     }
 
@@ -106,6 +148,11 @@ export function GraffitiCanvas() {
         if (localImageIds.current.has(img.id)) return;
         const c = ctx();
         if (c) await drawImage(c, img);
+      })
+      .on('broadcast', { event: 'new_text' }, ({ payload: text }: { payload: GraffitiText }) => {
+        if (localTextIds.current.has(text.id)) return;
+        const c = ctx();
+        if (c) drawText(c, text);
       })
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState();
@@ -179,23 +226,78 @@ export function GraffitiCanvas() {
       .from('graffiti-images')
       .upload(fileName, ghost.file, { contentType: ghost.file.type });
 
-    if (uploadError) { toast.error('사진 저장에 실패했습니다. 다시 시도해주세요.'); return; }
+    if (uploadError) {
+      console.error('[storage upload error]', uploadError);
+      toast.error('사진 저장에 실패했습니다. 다시 시도해주세요.');
+      return;
+    }
 
     const { data: urlData } = supabase.storage.from('graffiti-images').getPublicUrl(fileName);
+    console.log('[image url]', urlData.publicUrl);
 
     const { data, error } = await supabase.from('images').insert({
       url: urlData.publicUrl, x: pos.x, y: pos.y,
       width: ghost.width, height: ghost.height,
     }).select().single();
 
+    console.log('[image insert]', data, error);
     if (error) { toast.error('사진 저장에 실패했습니다. 다시 시도해주세요.'); return; }
 
     localImageIds.current.add(data.id);
     channelRef.current?.send({ type: 'broadcast', event: 'new_image', payload: data });
   }
 
+  function getCanvasScale() {
+    const canvas = canvasRef.current;
+    if (!canvas) return 1;
+    return canvas.getBoundingClientRect().width / LOGICAL_W;
+  }
+
+  async function handleTextCommit() {
+    if (!textInput?.value.trim()) { setTextInput(null); return; }
+    const { logX, logY, value } = textInput;
+    const fontSize = FONT_SIZES[thickness];
+    setTextInput(null);
+
+    const c = ctx();
+    if (c) {
+      c.save();
+      c.fillStyle = color;
+      c.font = `bold ${fontSize}px sans-serif`;
+      c.textBaseline = 'top';
+      c.fillText(value, logX, logY);
+      c.restore();
+    }
+
+    const { data, error } = await supabase
+      .from('texts')
+      .insert({ content: value, x: logX, y: logY, color, font_size: fontSize })
+      .select()
+      .single();
+
+    if (error) { toast.error('저장에 실패했습니다. 다시 시도해주세요.'); return; }
+
+    localTextIds.current.add(data.id);
+    channelRef.current?.send({ type: 'broadcast', event: 'new_text', payload: data });
+  }
+
+  async function handleTextBlur() {
+    if (textEscaped.current) { textEscaped.current = false; return; }
+    await handleTextCommit();
+  }
+
+  function handleTextKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') { e.preventDefault(); void handleTextCommit(); }
+    else if (e.key === 'Escape') { textEscaped.current = true; setTextInput(null); }
+  }
+
   function handlePointerDown(e: React.PointerEvent) {
     if (placementMode) { handleImagePlace(e); return; }
+    if (tool === 'text') {
+      const pos = toLogical(e);
+      setTextInput({ logX: pos.x, logY: pos.y, screenX: e.clientX, screenY: e.clientY, value: '' });
+      return;
+    }
     isDrawing.current = true;
     currentPoints.current = [toLogical(e)];
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -246,7 +348,7 @@ export function GraffitiCanvas() {
         width={LOGICAL_W}
         height={LOGICAL_H}
         className="fixed inset-0 w-screen h-screen"
-        style={{ cursor: 'crosshair', touchAction: 'none' }}
+        style={{ cursor: tool === 'text' && !placementMode ? 'text' : 'crosshair', touchAction: 'none' }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -266,6 +368,58 @@ export function GraffitiCanvas() {
           클릭해서 사진을 붙여넣으세요
         </div>
       )}
+
+      {textInput && (() => {
+        const scaledSize = FONT_SIZES[thickness] * getCanvasScale();
+        return (
+          <div
+            style={{
+              position: 'fixed',
+              left: textInput.screenX,
+              top: textInput.screenY,
+              display: 'grid',
+              fontSize: scaledSize,
+              fontFamily: 'sans-serif',
+              fontWeight: 'bold',
+              color,
+              zIndex: 50,
+            }}
+          >
+            <span
+              aria-hidden
+              style={{
+                gridArea: '1/1',
+                whiteSpace: 'pre',
+                visibility: 'hidden',
+                padding: '0 2px',
+                minWidth: '0.6em',
+              }}
+            >
+              {textInput.value + '​'}
+            </span>
+            <input
+              autoFocus
+              value={textInput.value}
+              onChange={(e) => setTextInput((prev) => prev && { ...prev, value: e.target.value })}
+              onKeyDown={handleTextKeyDown}
+              onBlur={handleTextBlur}
+              style={{
+                gridArea: '1/1',
+                background: 'transparent',
+                border: 'none',
+                outline: 'none',
+                color: 'inherit',
+                fontFamily: 'inherit',
+                fontSize: 'inherit',
+                fontWeight: 'inherit',
+                caretColor: color,
+                padding: '0 2px',
+                width: '100%',
+              }}
+            />
+          </div>
+        );
+      })()}
     </>
   );
 }
