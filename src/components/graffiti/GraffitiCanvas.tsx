@@ -394,7 +394,7 @@ export function GraffitiCanvas() {
   }
 
   function handleTextKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') { e.preventDefault(); void handleTextCommit(); }
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); void handleTextCommit(); }
     else if (e.key === 'Escape') { textEscaped.current = true; setTextInput(null); }
   }
 
