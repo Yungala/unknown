@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { supabase, type GraffitiImage, type GraffitiText, type Stroke } from '@/lib/supabase';
 import { useDrawingStore, type Thickness } from '@/stores/drawing-store';
+import { TransformOverlay, type TransformItem } from './TransformOverlay';
 
 const LOGICAL_W = 1920;
 const LOGICAL_H = 1080;
@@ -163,10 +164,11 @@ export function GraffitiCanvas() {
   } | null>(null);
   const textEscaped = useRef(false);
   const textBlurLocked = useRef(false);
+  const textCommittedRef = useRef(false);
 
-  const [placementMode, setPlacementMode] = useState(false);
-  const [ghostPos, setGhostPos] = useState<{ x: number; y: number } | null>(null);
-  const ghostImageRef = useRef<{ file: File; dataUrl: string; width: number; height: number } | null>(null);
+  const [transformPending, setTransformPending] = useState<{
+    item: TransformItem; initialCX?: number; initialCY?: number;
+  } | null>(null);
 
   const ctx = useCallback(() => canvasRef.current?.getContext('2d') ?? null, []);
 
@@ -267,7 +269,7 @@ export function GraffitiCanvas() {
     };
   }, [ctx, setConnected, setPresenceCount]);
 
-  // 이미지 파일 선택 → 배치 모드
+  // 이미지 파일 선택 → 변환 모드
   useEffect(() => {
     if (!pendingImageFile) return;
     const reader = new FileReader();
@@ -275,83 +277,16 @@ export function GraffitiCanvas() {
       const dataUrl = e.target?.result as string;
       const img = new Image();
       img.onload = () => {
-        const maxSize = 400;
-        const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1);
-        ghostImageRef.current = {
-          file: pendingImageFile,
-          dataUrl,
-          width: img.width * ratio,
-          height: img.height * ratio,
-        };
-        setPlacementMode(true);
-        setUploadMode(true);
+        setTransformPending({
+          item: { kind: 'image', dataUrl, file: pendingImageFile, naturalW: img.width, naturalH: img.height },
+        });
+        setPendingImageFile(null);
+        setUploadMode(false);
       };
       img.src = dataUrl;
     };
     reader.readAsDataURL(pendingImageFile);
-  }, [pendingImageFile, setUploadMode]);
-
-  // CSS 픽셀 → 논리 캔버스 단위 변환 (X/Y 배율이 다를 수 있으므로 각각 처리)
-  function cssToLogical(cssW: number, cssH: number) {
-    const canvas = canvasRef.current;
-    const rect = canvas?.getBoundingClientRect();
-    const scaleX = rect ? LOGICAL_W / rect.width : 1;
-    const scaleY = rect ? LOGICAL_H / rect.height : 1;
-    return { w: cssW * scaleX, h: cssH * scaleY };
-  }
-
-  // 이미지 배치 완료
-  async function handleImagePlace(e: React.PointerEvent) {
-    if (!placementMode || !ghostImageRef.current) return;
-    const pos = toLogical(e);
-    const ghost = ghostImageRef.current;
-
-    // ghost.width/height는 CSS 픽셀 단위 → 논리 단위로 변환
-    const { w: logW, h: logH } = cssToLogical(ghost.width, ghost.height);
-
-    const c = ctx();
-    if (c) {
-      const tempImg: GraffitiImage = {
-        id: 'temp', url: ghost.dataUrl,
-        x: pos.x, y: pos.y,
-        width: logW, height: logH,
-        created_at: new Date().toISOString(),
-      };
-      await drawImage(c, tempImg);
-    }
-
-    setPlacementMode(false);
-    setUploadMode(false);
-    setGhostPos(null);
-    setPendingImageFile(null);
-    ghostImageRef.current = null;
-
-    const ext = ghost.file.name.split('.').pop() ?? 'jpg';
-    const fileName = `${crypto.randomUUID()}.${ext}`;
-    const { error: uploadError } = await supabase.storage
-      .from('graffiti-images')
-      .upload(fileName, ghost.file, { contentType: ghost.file.type });
-
-    if (uploadError) {
-      console.error('[storage upload error]', uploadError);
-      toast.error('사진 저장에 실패했습니다. 다시 시도해주세요.');
-      return;
-    }
-
-    const { data: urlData } = supabase.storage.from('graffiti-images').getPublicUrl(fileName);
-    console.log('[image url]', urlData.publicUrl);
-
-    const { data, error } = await supabase.from('images').insert({
-      url: urlData.publicUrl, x: pos.x, y: pos.y,
-      width: logW, height: logH,
-    }).select().single();
-
-    console.log('[image insert]', data, error);
-    if (error) { toast.error('사진 저장에 실패했습니다. 다시 시도해주세요.'); return; }
-
-    localImageIds.current.add(data.id);
-    channelRef.current?.send({ type: 'broadcast', event: 'new_image', payload: data });
-  }
+  }, [pendingImageFile, setUploadMode, setPendingImageFile]);
 
   function getCanvasScale() {
     const canvas = canvasRef.current;
@@ -359,60 +294,82 @@ export function GraffitiCanvas() {
     return canvas.getBoundingClientRect().width / LOGICAL_W;
   }
 
-  async function handleTextCommit() {
-    if (!textInput?.value.trim()) { setTextInput(null); return; }
-    const { logX, logY, value } = textInput;
-    const fontSize = FONT_SIZES[thickness];
-    setTextInput(null);
+  function cssToLogical(cssW: number, cssH: number) {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const scaleX = rect ? LOGICAL_W / rect.width : 1;
+    const scaleY = rect ? LOGICAL_H / rect.height : 1;
+    return { w: cssW * scaleX, h: cssH * scaleY };
+  }
 
+  // 변환 확정 → 캔버스에 그리고 저장
+  async function handleTransformConfirm(file: File, cssX: number, cssY: number, cssW: number, cssH: number) {
+    setTransformPending(null);
+    const { w: logW, h: logH } = cssToLogical(cssW, cssH);
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const logX = rect ? (cssX - rect.left) / rect.width * LOGICAL_W : cssX;
+    const logY = rect ? (cssY - rect.top) / rect.height * LOGICAL_H : cssY;
+
+    // 즉시 캔버스에 표시
+    const objUrl = URL.createObjectURL(file);
+    const el = await preloadImage(objUrl);
+    URL.revokeObjectURL(objUrl);
     const c = ctx();
-    if (c) {
+    if (c && el.naturalWidth) {
       c.save();
-      c.fillStyle = color;
-      c.font = `bold ${fontSize}px ${fontFamily}`;
-      c.textBaseline = 'top';
-      c.fillText(value, logX, logY);
+      c.drawImage(el, logX - logW / 2, logY - logH / 2, logW, logH);
       c.restore();
     }
 
-    const { data, error } = await supabase
-      .from('texts')
-      .insert({ content: value, x: logX, y: logY, color, font_size: fontSize, font_family: fontFamily })
-      .select()
-      .single();
+    const fileName = `${crypto.randomUUID()}.png`;
+    const { error: uploadError } = await supabase.storage
+      .from('graffiti-images')
+      .upload(fileName, file, { contentType: 'image/png' });
+    if (uploadError) { toast.error('저장에 실패했습니다. 다시 시도해주세요.'); return; }
 
+    const { data: urlData } = supabase.storage.from('graffiti-images').getPublicUrl(fileName);
+    const { data, error } = await supabase.from('images')
+      .insert({ url: urlData.publicUrl, x: logX, y: logY, width: logW, height: logH })
+      .select().single();
     if (error) { toast.error('저장에 실패했습니다. 다시 시도해주세요.'); return; }
 
-    localTextIds.current.add(data.id);
-    channelRef.current?.send({ type: 'broadcast', event: 'new_text', payload: data });
+    localImageIds.current.add(data.id);
+    channelRef.current?.send({ type: 'broadcast', event: 'new_image', payload: data });
   }
 
-  async function handleTextBlur() {
+  function handleTextCommit() {
+    if (textCommittedRef.current) return;
+    if (!textInput?.value.trim()) { setTextInput(null); return; }
+    textCommittedRef.current = true;
+    const { screenX, screenY, value } = textInput;
+    const fontSize = FONT_SIZES[thickness];
+    setTextInput(null);
+    setTransformPending({
+      item: { kind: 'text', content: value, color, fontSize, fontFamily },
+      initialCX: screenX,
+      initialCY: screenY,
+    });
+    requestAnimationFrame(() => { textCommittedRef.current = false; });
+  }
+
+  function handleTextBlur() {
     if (textEscaped.current) { textEscaped.current = false; return; }
     if (textBlurLocked.current) return;
-    await handleTextCommit();
+    handleTextCommit();
   }
 
   function handleTextKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); void handleTextCommit(); }
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); handleTextCommit(); }
     else if (e.key === 'Escape') { textEscaped.current = true; setTextInput(null); }
   }
 
   function handlePointerDown(e: React.PointerEvent) {
-    if (placementMode) { handleImagePlace(e); return; }
     if (tool === 'text') {
       e.preventDefault();
       textBlurLocked.current = true;
       const pos = toLogical(e);
       setTextInput({ logX: pos.x, logY: pos.y, screenX: e.clientX, screenY: e.clientY, value: '' });
-      // 마운트 직후 blur가 즉시 닫지 않도록 잠금 해제를 다음 틱으로 지연
       setTimeout(() => { textBlurLocked.current = false; }, 100);
-      return;
     }
-  }
-
-  function handlePointerMove(e: React.PointerEvent) {
-    if (placementMode) { setGhostPos({ x: e.clientX, y: e.clientY }); }
   }
 
   return (
@@ -425,26 +382,21 @@ export function GraffitiCanvas() {
         style={{
           top: '20vh',
           height: '80vh',
-          cursor: placementMode ? 'crosshair' : tool === 'text' ? 'text' : 'default',
+          cursor: tool === 'text' ? 'text' : 'default',
           touchAction: 'none',
         }}
         onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
       />
 
-      {placementMode && ghostImageRef.current && ghostPos && (
-        <img
-          src={ghostImageRef.current.dataUrl}
-          alt="배치 미리보기"
-          className="fixed pointer-events-none opacity-60 -translate-x-1/2 -translate-y-1/2"
-          style={{ left: ghostPos.x, top: ghostPos.y, width: ghostImageRef.current.width, height: ghostImageRef.current.height }}
+      {transformPending && canvasRef.current && (
+        <TransformOverlay
+          item={transformPending.item}
+          canvasRect={canvasRef.current.getBoundingClientRect()}
+          initialCX={transformPending.initialCX}
+          initialCY={transformPending.initialCY}
+          onConfirm={handleTransformConfirm}
+          onCancel={() => { setTransformPending(null); setUploadMode(false); }}
         />
-      )}
-
-      {placementMode && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-black/70 backdrop-blur text-white text-sm px-4 py-2 rounded-full">
-          클릭해서 사진을 붙여넣으세요
-        </div>
       )}
 
       {textInput && (
