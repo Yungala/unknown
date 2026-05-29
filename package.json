@@ -19,7 +19,7 @@
     "format:check": "prettier --check .",
     "test": "vitest",
     "test:run": "vitest run",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
