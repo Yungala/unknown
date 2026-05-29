@@ -44,6 +44,7 @@ export interface GraffitiText {
   y: number;
   color: string;
   font_size: number;
+  font_family: string;
   created_at: string;
 }
 
@@ -53,4 +54,5 @@ export interface GraffitiTextInsert {
   y: number;
   color: string;
   font_size: number;
+  font_family: string;
 }

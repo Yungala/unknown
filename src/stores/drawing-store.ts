@@ -12,10 +12,19 @@ export type Thickness = (typeof THICKNESSES)[number];
 
 export type Tool = 'brush' | 'text';
 
+export const FONT_FAMILIES = [
+  { value: 'sans-serif',              label: '고딕',   sample: 'A' },
+  { value: 'serif',                   label: '명조',   sample: 'A' },
+  { value: 'Impact, fantasy',         label: '임팩트', sample: 'A' },
+  { value: "'Comic Sans MS', cursive", label: '손글씨', sample: 'A' },
+] as const;
+export type FontFamily = (typeof FONT_FAMILIES)[number]['value'];
+
 interface DrawingStore {
   color: string;
   thickness: Thickness;
   tool: Tool;
+  fontFamily: FontFamily;
   isConnected: boolean;
   presenceCount: number;
   isUploadMode: boolean;
@@ -23,6 +32,7 @@ interface DrawingStore {
   setColor: (color: string) => void;
   setThickness: (thickness: Thickness) => void;
   setTool: (tool: Tool) => void;
+  setFontFamily: (f: FontFamily) => void;
   setConnected: (connected: boolean) => void;
   setPresenceCount: (count: number) => void;
   setUploadMode: (mode: boolean) => void;
@@ -33,6 +43,7 @@ export const useDrawingStore = create<DrawingStore>((set) => ({
   color: '#EF4444',
   thickness: 6,
   tool: 'brush',
+  fontFamily: 'sans-serif',
   isConnected: true,
   presenceCount: 1,
   isUploadMode: false,
@@ -40,6 +51,7 @@ export const useDrawingStore = create<DrawingStore>((set) => ({
   setColor: (color) => set({ color }),
   setThickness: (thickness) => set({ thickness }),
   setTool: (tool) => set({ tool }),
+  setFontFamily: (fontFamily) => set({ fontFamily }),
   setConnected: (isConnected) => set({ isConnected }),
   setPresenceCount: (presenceCount) => set({ presenceCount }),
   setUploadMode: (isUploadMode) => set({ isUploadMode }),

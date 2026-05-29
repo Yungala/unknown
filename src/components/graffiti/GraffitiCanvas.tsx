@@ -48,7 +48,7 @@ async function drawImage(ctx: CanvasRenderingContext2D, img: GraffitiImage) {
 function drawText(ctx: CanvasRenderingContext2D, text: GraffitiText) {
   ctx.save();
   ctx.fillStyle = text.color;
-  ctx.font = `bold ${text.font_size}px sans-serif`;
+  ctx.font = `bold ${text.font_size}px ${text.font_family ?? 'sans-serif'}`;
   ctx.textBaseline = 'top';
   ctx.fillText(text.content, text.x, text.y);
   ctx.restore();
@@ -57,7 +57,7 @@ function drawText(ctx: CanvasRenderingContext2D, text: GraffitiText) {
 export function GraffitiCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const { color, thickness, tool, setConnected, setPresenceCount, setUploadMode, setPendingImageFile, pendingImageFile } = useDrawingStore();
+  const { color, thickness, tool, fontFamily, setConnected, setPresenceCount, setUploadMode, setPendingImageFile, pendingImageFile } = useDrawingStore();
   const localStrokeIds = useRef(new Set<string>());
   const localImageIds = useRef(new Set<string>());
   const localTextIds = useRef(new Set<string>());
@@ -262,7 +262,7 @@ export function GraffitiCanvas() {
     if (c) {
       c.save();
       c.fillStyle = color;
-      c.font = `bold ${fontSize}px sans-serif`;
+      c.font = `bold ${fontSize}px ${fontFamily}`;
       c.textBaseline = 'top';
       c.fillText(value, logX, logY);
       c.restore();
@@ -270,7 +270,7 @@ export function GraffitiCanvas() {
 
     const { data, error } = await supabase
       .from('texts')
-      .insert({ content: value, x: logX, y: logY, color, font_size: fontSize })
+      .insert({ content: value, x: logX, y: logY, color, font_size: fontSize, font_family: fontFamily })
       .select()
       .single();
 
@@ -348,7 +348,7 @@ export function GraffitiCanvas() {
             top: textInput.screenY,
             display: 'grid',
             fontSize: `${FONT_SIZES[thickness] * getCanvasScale()}px`,
-            fontFamily: 'sans-serif',
+            fontFamily,
             fontWeight: 'bold',
             color,
             zIndex: 50,
