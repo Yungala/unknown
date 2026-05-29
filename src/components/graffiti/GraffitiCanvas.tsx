@@ -196,18 +196,30 @@ export function GraffitiCanvas() {
     reader.readAsDataURL(pendingImageFile);
   }, [pendingImageFile, setUploadMode]);
 
+  // CSS 픽셀 → 논리 캔버스 단위 변환 (X/Y 배율이 다를 수 있으므로 각각 처리)
+  function cssToLogical(cssW: number, cssH: number) {
+    const canvas = canvasRef.current;
+    const rect = canvas?.getBoundingClientRect();
+    const scaleX = rect ? LOGICAL_W / rect.width : 1;
+    const scaleY = rect ? LOGICAL_H / rect.height : 1;
+    return { w: cssW * scaleX, h: cssH * scaleY };
+  }
+
   // 이미지 배치 완료
   async function handleImagePlace(e: React.PointerEvent) {
     if (!placementMode || !ghostImageRef.current) return;
     const pos = toLogical(e);
     const ghost = ghostImageRef.current;
 
+    // ghost.width/height는 CSS 픽셀 단위 → 논리 단위로 변환
+    const { w: logW, h: logH } = cssToLogical(ghost.width, ghost.height);
+
     const c = ctx();
     if (c) {
       const tempImg: GraffitiImage = {
         id: 'temp', url: ghost.dataUrl,
         x: pos.x, y: pos.y,
-        width: ghost.width, height: ghost.height,
+        width: logW, height: logH,
         created_at: new Date().toISOString(),
       };
       await drawImage(c, tempImg);
@@ -236,7 +248,7 @@ export function GraffitiCanvas() {
 
     const { data, error } = await supabase.from('images').insert({
       url: urlData.publicUrl, x: pos.x, y: pos.y,
-      width: ghost.width, height: ghost.height,
+      width: logW, height: logH,
     }).select().single();
 
     console.log('[image insert]', data, error);

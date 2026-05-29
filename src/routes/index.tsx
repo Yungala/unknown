@@ -4,6 +4,7 @@ import { GraffitiCanvas } from '@/components/graffiti/GraffitiCanvas';
 import { DrawingToolbar } from '@/components/graffiti/DrawingToolbar';
 import { ConnectionBanner } from '@/components/graffiti/ConnectionBanner';
 import { PresenceCounter } from '@/components/graffiti/PresenceCounter';
+import { SkyView } from '@/components/graffiti/SkyView';
 import { useDrawingStore } from '@/stores/drawing-store';
 
 export const Route = createFileRoute('/')({
@@ -22,6 +23,7 @@ function GraffitiWallPage() {
     <>
       <ConnectionBanner />
       <PresenceCounter />
+      <SkyView />
       <GraffitiCanvas />
       <DrawingToolbar onImageSelected={handleImageSelected} />
       <Toaster position="top-center" richColors />
