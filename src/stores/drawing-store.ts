@@ -40,7 +40,7 @@ interface DrawingStore {
 }
 
 export const useDrawingStore = create<DrawingStore>((set) => ({
-  color: '#EF4444',
+  color: '#111111',
   thickness: 6,
   tool: 'brush',
   fontFamily: 'sans-serif',
