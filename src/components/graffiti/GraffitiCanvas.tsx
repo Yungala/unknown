@@ -26,7 +26,6 @@ function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke | StrokeInsert
 async function drawImage(ctx: CanvasRenderingContext2D, img: GraffitiImage) {
   return new Promise<void>((resolve) => {
     const el = new Image();
-    el.crossOrigin = 'anonymous';
     el.onload = () => {
       ctx.save();
       ctx.drawImage(el, img.x - img.width / 2, img.y - img.height / 2, img.width, img.height);
