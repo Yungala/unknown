@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { supabase, type GraffitiImage, type GraffitiText, type Stroke, type StrokeInsert } from '@/lib/supabase';
+import { supabase, type GraffitiImage, type GraffitiText, type Stroke } from '@/lib/supabase';
 import { useDrawingStore, type Thickness } from '@/stores/drawing-store';
 
 const LOGICAL_W = 1920;
@@ -58,8 +58,6 @@ export function GraffitiCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const { color, thickness, tool, setConnected, setPresenceCount, setUploadMode, setPendingImageFile, pendingImageFile } = useDrawingStore();
-  const isDrawing = useRef(false);
-  const currentPoints = useRef<{ x: number; y: number }[]>([]);
   const localStrokeIds = useRef(new Set<string>());
   const localImageIds = useRef(new Set<string>());
   const localTextIds = useRef(new Set<string>());
@@ -68,6 +66,7 @@ export function GraffitiCanvas() {
     logX: number; logY: number; screenX: number; screenY: number; value: string;
   } | null>(null);
   const textEscaped = useRef(false);
+  const textBlurLocked = useRef(false);
 
   const [placementMode, setPlacementMode] = useState(false);
   const [ghostPos, setGhostPos] = useState<{ x: number; y: number } | null>(null);
@@ -90,7 +89,7 @@ export function GraffitiCanvas() {
       const c = ctx();
       if (!c) return;
 
-      c.fillStyle = '#1c1917';
+      c.fillStyle = '#2a0a0a';
       c.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
 
       const [strokesRes, imagesRes, textsRes] = await Promise.all([
@@ -283,6 +282,7 @@ export function GraffitiCanvas() {
 
   async function handleTextBlur() {
     if (textEscaped.current) { textEscaped.current = false; return; }
+    if (textBlurLocked.current) return;
     await handleTextCommit();
   }
 
@@ -294,51 +294,18 @@ export function GraffitiCanvas() {
   function handlePointerDown(e: React.PointerEvent) {
     if (placementMode) { handleImagePlace(e); return; }
     if (tool === 'text') {
+      e.preventDefault();
+      textBlurLocked.current = true;
       const pos = toLogical(e);
       setTextInput({ logX: pos.x, logY: pos.y, screenX: e.clientX, screenY: e.clientY, value: '' });
+      // 마운트 직후 blur가 즉시 닫지 않도록 잠금 해제를 다음 틱으로 지연
+      setTimeout(() => { textBlurLocked.current = false; }, 100);
       return;
     }
-    isDrawing.current = true;
-    currentPoints.current = [toLogical(e)];
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
   }
 
   function handlePointerMove(e: React.PointerEvent) {
-    if (placementMode) { setGhostPos({ x: e.clientX, y: e.clientY }); return; }
-    if (!isDrawing.current) return;
-    const pt = toLogical(e);
-    const points = currentPoints.current;
-    const c = ctx();
-    if (c && points.length > 0) {
-      const prev = points[points.length - 1];
-      c.save();
-      c.strokeStyle = color;
-      c.lineWidth = thickness;
-      c.lineCap = 'round';
-      c.lineJoin = 'round';
-      c.beginPath();
-      c.moveTo(prev.x, prev.y);
-      c.lineTo(pt.x, pt.y);
-      c.stroke();
-      c.restore();
-    }
-    points.push(pt);
-  }
-
-  async function handlePointerUp() {
-    if (!isDrawing.current) return;
-    isDrawing.current = false;
-    const points = currentPoints.current;
-    if (points.length < 2) return;
-
-    const payload: StrokeInsert = { points, color, thickness };
-    const { data, error } = await supabase.from('strokes').insert(payload).select().single();
-    if (error) { toast.error('저장에 실패했습니다. 다시 시도해주세요.'); return; }
-
-    localStrokeIds.current.add(data.id);
-    currentPoints.current = [];
-    // DB 저장 후 다른 클라이언트에 broadcast
-    channelRef.current?.send({ type: 'broadcast', event: 'new_stroke', payload: data });
+    if (placementMode) { setGhostPos({ x: e.clientX, y: e.clientY }); }
   }
 
   return (
@@ -347,11 +314,15 @@ export function GraffitiCanvas() {
         ref={canvasRef}
         width={LOGICAL_W}
         height={LOGICAL_H}
-        className="fixed inset-0 w-screen h-screen"
-        style={{ cursor: tool === 'text' && !placementMode ? 'text' : 'crosshair', touchAction: 'none' }}
+        className="fixed left-0 w-screen z-20"
+        style={{
+          top: '33.333vh',
+          height: '66.667vh',
+          cursor: placementMode ? 'crosshair' : tool === 'text' ? 'text' : 'default',
+          touchAction: 'none',
+        }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
       />
 
       {placementMode && ghostImageRef.current && ghostPos && (
@@ -369,57 +340,56 @@ export function GraffitiCanvas() {
         </div>
       )}
 
-      {textInput && (() => {
-        const scaledSize = FONT_SIZES[thickness] * getCanvasScale();
-        return (
-          <div
+      {textInput && (
+        <div
+          style={{
+            position: 'fixed',
+            left: textInput.screenX,
+            top: textInput.screenY,
+            display: 'grid',
+            fontSize: `${FONT_SIZES[thickness] * getCanvasScale()}px`,
+            fontFamily: 'sans-serif',
+            fontWeight: 'bold',
+            color,
+            zIndex: 50,
+          }}
+        >
+          <span
+            aria-hidden
             style={{
-              position: 'fixed',
-              left: textInput.screenX,
-              top: textInput.screenY,
-              display: 'grid',
-              fontSize: scaledSize,
-              fontFamily: 'sans-serif',
-              fontWeight: 'bold',
-              color,
-              zIndex: 50,
+              gridArea: '1/1',
+              whiteSpace: 'pre',
+              visibility: 'hidden',
+              padding: '0 2px',
+              minWidth: '2ch',
             }}
           >
-            <span
-              aria-hidden
-              style={{
-                gridArea: '1/1',
-                whiteSpace: 'pre',
-                visibility: 'hidden',
-                padding: '0 2px',
-                minWidth: '0.6em',
-              }}
-            >
-              {textInput.value + '​'}
-            </span>
-            <input
-              autoFocus
-              value={textInput.value}
-              onChange={(e) => setTextInput((prev) => prev && { ...prev, value: e.target.value })}
-              onKeyDown={handleTextKeyDown}
-              onBlur={handleTextBlur}
-              style={{
-                gridArea: '1/1',
-                background: 'transparent',
-                border: 'none',
-                outline: 'none',
-                color: 'inherit',
-                fontFamily: 'inherit',
-                fontSize: 'inherit',
-                fontWeight: 'inherit',
-                caretColor: color,
-                padding: '0 2px',
-                width: '100%',
-              }}
-            />
-          </div>
-        );
-      })()}
+            {textInput.value + '​'}
+          </span>
+          <input
+            autoFocus
+            value={textInput.value}
+            onChange={(e) => setTextInput((prev) => prev && { ...prev, value: e.target.value })}
+            onKeyDown={handleTextKeyDown}
+            onBlur={handleTextBlur}
+            onPointerDown={(e) => e.stopPropagation()}
+            style={{
+              gridArea: '1/1',
+              background: 'transparent',
+              border: 'none',
+              outline: 'none',
+              color: 'inherit',
+              fontFamily: 'inherit',
+              fontSize: 'inherit',
+              fontWeight: 'inherit',
+              caretColor: color,
+              padding: '0 2px',
+              width: '100%',
+              minWidth: '2ch',
+            }}
+          />
+        </div>
+      )}
     </>
   );
 }
