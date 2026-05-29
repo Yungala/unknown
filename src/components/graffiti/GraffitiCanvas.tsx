@@ -159,13 +159,6 @@ export function GraffitiCanvas() {
   const localImageIds = useRef(new Set<string>());
   const localTextIds = useRef(new Set<string>());
 
-  const [textInput, setTextInput] = useState<{
-    logX: number; logY: number; screenX: number; screenY: number; value: string;
-  } | null>(null);
-  const textEscaped = useRef(false);
-  const textBlurLocked = useRef(false);
-  const textCommittedRef = useRef(false);
-
   const [transformPending, setTransformPending] = useState<{
     item: TransformItem; initialCX?: number; initialCY?: number;
   } | null>(null);
@@ -288,12 +281,6 @@ export function GraffitiCanvas() {
     reader.readAsDataURL(pendingImageFile);
   }, [pendingImageFile, setUploadMode, setPendingImageFile]);
 
-  function getCanvasScale() {
-    const canvas = canvasRef.current;
-    if (!canvas) return 1;
-    return canvas.getBoundingClientRect().width / LOGICAL_W;
-  }
-
   function cssToLogical(cssW: number, cssH: number) {
     const rect = canvasRef.current?.getBoundingClientRect();
     const scaleX = rect ? LOGICAL_W / rect.width : 1;
@@ -336,39 +323,14 @@ export function GraffitiCanvas() {
     channelRef.current?.send({ type: 'broadcast', event: 'new_image', payload: data });
   }
 
-  function handleTextCommit() {
-    if (textCommittedRef.current) return;
-    if (!textInput?.value.trim()) { setTextInput(null); return; }
-    textCommittedRef.current = true;
-    const { screenX, screenY, value } = textInput;
-    const fontSize = FONT_SIZES[thickness];
-    setTextInput(null);
-    setTransformPending({
-      item: { kind: 'text', content: value, color, fontSize, fontFamily },
-      initialCX: screenX,
-      initialCY: screenY,
-    });
-    requestAnimationFrame(() => { textCommittedRef.current = false; });
-  }
-
-  function handleTextBlur() {
-    if (textEscaped.current) { textEscaped.current = false; return; }
-    if (textBlurLocked.current) return;
-    handleTextCommit();
-  }
-
-  function handleTextKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); handleTextCommit(); }
-    else if (e.key === 'Escape') { textEscaped.current = true; setTextInput(null); }
-  }
-
   function handlePointerDown(e: React.PointerEvent) {
     if (tool === 'text') {
       e.preventDefault();
-      textBlurLocked.current = true;
-      const pos = toLogical(e);
-      setTextInput({ logX: pos.x, logY: pos.y, screenX: e.clientX, screenY: e.clientY, value: '' });
-      setTimeout(() => { textBlurLocked.current = false; }, 100);
+      setTransformPending({
+        item: { kind: 'text', content: '', color, fontSize: FONT_SIZES[thickness], fontFamily },
+        initialCX: e.clientX,
+        initialCY: e.clientY,
+      });
     }
   }
 
@@ -399,56 +361,6 @@ export function GraffitiCanvas() {
         />
       )}
 
-      {textInput && (
-        <div
-          style={{
-            position: 'fixed',
-            left: textInput.screenX,
-            top: textInput.screenY,
-            display: 'grid',
-            fontSize: `${FONT_SIZES[thickness] * getCanvasScale()}px`,
-            fontFamily,
-            fontWeight: 'bold',
-            color,
-            zIndex: 50,
-          }}
-        >
-          <span
-            aria-hidden
-            style={{
-              gridArea: '1/1',
-              whiteSpace: 'pre',
-              visibility: 'hidden',
-              padding: '0 2px',
-              minWidth: '2ch',
-            }}
-          >
-            {textInput.value + '​'}
-          </span>
-          <input
-            autoFocus
-            value={textInput.value}
-            onChange={(e) => setTextInput((prev) => prev && { ...prev, value: e.target.value })}
-            onKeyDown={handleTextKeyDown}
-            onBlur={handleTextBlur}
-            onPointerDown={(e) => e.stopPropagation()}
-            style={{
-              gridArea: '1/1',
-              background: 'transparent',
-              border: 'none',
-              outline: 'none',
-              color: 'inherit',
-              fontFamily: 'inherit',
-              fontSize: 'inherit',
-              fontWeight: 'inherit',
-              caretColor: color,
-              padding: '0 2px',
-              width: '100%',
-              minWidth: '2ch',
-            }}
-          />
-        </div>
-      )}
     </>
   );
 }

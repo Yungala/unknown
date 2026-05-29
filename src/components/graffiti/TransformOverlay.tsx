@@ -32,7 +32,8 @@ function measureInitialSize(item: TransformItem, canvasRect: DOMRect): { w: numb
   }
   const oc = document.createElement('canvas').getContext('2d')!;
   oc.font = `bold ${item.fontSize}px ${item.fontFamily}`;
-  const tw = Math.max(oc.measureText(item.content).width + 24, 80);
+  const sample = item.content.trim() || 'Aa';
+  const tw = Math.max(oc.measureText(sample).width + 24, 80);
   return { w: tw, h: item.fontSize * 1.5 };
 }
 
@@ -46,7 +47,19 @@ export function TransformOverlay({ item, canvasRect, initialCX, initialCY, onCon
     return { cx, cy, w, h, rot: 0 };
   });
 
+  const [localText, setLocalText] = useState(() => item.kind === 'text' ? item.content : '');
+
   const dragRef = useRef<DragOp | null>(null);
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onCancelRef.current();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   useEffect(() => {
     function onMove(e: PointerEvent) {
@@ -79,6 +92,7 @@ export function TransformOverlay({ item, canvasRect, initialCX, initialCY, onCon
   }, []);
 
   function handleConfirm() {
+    if (item.kind === 'text' && !localText.trim()) { onCancel(); return; }
     const rotRad = tf.rot * Math.PI / 180;
     const ac = Math.abs(Math.cos(rotRad));
     const as = Math.abs(Math.sin(rotRad));
@@ -112,7 +126,7 @@ export function TransformOverlay({ item, canvasRect, initialCX, initialCY, onCon
       c.font = `bold ${fontSize}px ${item.fontFamily}`;
       c.textBaseline = 'middle';
       c.textAlign = 'center';
-      c.fillText(item.content, 0, 0);
+      c.fillText(localText, 0, 0);
       finalize();
     }
   }
@@ -157,16 +171,35 @@ export function TransformOverlay({ item, canvasRect, initialCX, initialCY, onCon
           />
         ) : (
           <div style={{
-            width: '100%', height: '100%',
-            color: item.color,
-            fontSize: textFontSize,
-            fontFamily: item.fontFamily,
-            fontWeight: 'bold',
+            position: 'absolute', inset: 0,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            whiteSpace: 'nowrap',
             pointerEvents: 'none',
           }}>
-            {item.content}
+            <div
+              style={{ display: 'grid', pointerEvents: 'auto' }}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <span style={{
+                gridArea: '1/1', visibility: 'hidden', whiteSpace: 'pre',
+                fontSize: textFontSize, fontFamily: item.fontFamily, fontWeight: 'bold',
+                padding: '0 4px', minWidth: '2ch',
+              }}>
+                {localText + '​'}
+              </span>
+              <input
+                autoFocus
+                value={localText}
+                onChange={(e) => setLocalText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); handleConfirm(); }
+                }}
+                style={{
+                  gridArea: '1/1', background: 'transparent', border: 'none', outline: 'none',
+                  color: item.color, fontSize: textFontSize, fontFamily: item.fontFamily, fontWeight: 'bold',
+                  caretColor: item.color, padding: '0 4px', width: '100%', minWidth: '2ch', textAlign: 'center',
+                }}
+              />
+            </div>
           </div>
         )}
 
