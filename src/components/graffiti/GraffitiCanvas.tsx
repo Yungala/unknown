@@ -8,6 +8,102 @@ const LOGICAL_H = 1080;
 const CHANNEL_NAME = 'graffiti-wall';
 const FONT_SIZES: Record<Thickness, number> = { 2: 28, 6: 52, 14: 100 };
 
+const WALL_BOTTOM = 870;
+const CAP_H = 12;
+const BASEBOARD_H = 72;
+const MOLDING_H = 34;
+// brickY = 870 + 12 + 72 + 34 = 988 → to 1080 = 92px
+
+function drawHerringbone(c: CanvasRenderingContext2D, startY: number, endY: number) {
+  const cell = 60;
+  const mortar = 3;
+  const bH = Math.floor((cell - 3 * mortar) / 2); // 25
+  const bW = cell - 2 * mortar;                   // 54
+
+  c.save();
+  c.beginPath();
+  c.rect(0, startY, LOGICAL_W, endY - startY);
+  c.clip();
+
+  c.fillStyle = '#5a4e47';
+  c.fillRect(0, startY, LOGICAL_W, endY - startY);
+
+  const brickColors = ['#8c7f76', '#97897f', '#7f7369', '#a09388', '#867a70'];
+  const startRow = Math.floor(startY / cell);
+  const endRow = Math.ceil(endY / cell);
+
+  for (let row = startRow; row <= endRow; row++) {
+    for (let col = 0; col * cell <= LOGICAL_W; col++) {
+      const px = col * cell;
+      const py = row * cell;
+      const isH = (row + col) % 2 === 0;
+      const c1 = brickColors[Math.abs(row * 7 + col * 3) % brickColors.length];
+      const c2 = brickColors[Math.abs(row * 5 + col * 7 + 2) % brickColors.length];
+
+      c.fillStyle = c1;
+      if (isH) {
+        c.fillRect(px + mortar, py + mortar, bW, bH);
+        c.fillStyle = c2;
+        c.fillRect(px + mortar, py + mortar + bH + mortar, bW, bH);
+      } else {
+        c.fillRect(px + mortar, py + mortar, bH, bW);
+        c.fillStyle = c2;
+        c.fillRect(px + mortar + bH + mortar, py + mortar, bH, bW);
+      }
+    }
+  }
+  c.restore();
+}
+
+function drawBackground(c: CanvasRenderingContext2D) {
+  // 벽 (스투코 질감)
+  const wallGrad = c.createLinearGradient(0, 0, 0, WALL_BOTTOM);
+  wallGrad.addColorStop(0, '#eae7e0');
+  wallGrad.addColorStop(0.5, '#e3e0d9');
+  wallGrad.addColorStop(1, '#dbd8d1');
+  c.fillStyle = wallGrad;
+  c.fillRect(0, 0, LOGICAL_W, WALL_BOTTOM);
+
+  // 미세 스투코 점묘
+  c.save();
+  c.globalAlpha = 0.12;
+  for (let i = 0; i < 7000; i++) {
+    const x = Math.random() * LOGICAL_W;
+    const y = Math.random() * WALL_BOTTOM;
+    const bright = Math.random() > 0.5;
+    c.fillStyle = bright ? '#ffffff' : '#7a7870';
+    c.fillRect(x, y, Math.random() * 2 + 1, Math.random() * 2 + 1);
+  }
+  c.restore();
+
+  // 걸레받이 캡 (shadow line)
+  const capY = WALL_BOTTOM;
+  const capGrad = c.createLinearGradient(0, capY, 0, capY + CAP_H);
+  capGrad.addColorStop(0, '#aeaaa3');
+  capGrad.addColorStop(1, '#c6c2bc');
+  c.fillStyle = capGrad;
+  c.fillRect(0, capY, LOGICAL_W, CAP_H);
+
+  // 흰 걸레받이
+  const boardY = capY + CAP_H;
+  const boardGrad = c.createLinearGradient(0, boardY, 0, boardY + BASEBOARD_H);
+  boardGrad.addColorStop(0, '#f3f1ef');
+  boardGrad.addColorStop(0.8, '#edeae7');
+  boardGrad.addColorStop(1, '#d6d3ce');
+  c.fillStyle = boardGrad;
+  c.fillRect(0, boardY, LOGICAL_W, BASEBOARD_H);
+
+  // 어두운 몰딩 띠
+  const moldingY = boardY + BASEBOARD_H;
+  c.fillStyle = '#2c2620';
+  c.fillRect(0, moldingY, LOGICAL_W, MOLDING_H);
+  c.fillStyle = '#44403a';
+  c.fillRect(0, moldingY, LOGICAL_W, 5);
+
+  // 헤링본 벽돌 바닥
+  drawHerringbone(c, moldingY + MOLDING_H, LOGICAL_H);
+}
+
 function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke) {
   if (stroke.points.length < 2) return;
   ctx.save();
@@ -89,8 +185,7 @@ export function GraffitiCanvas() {
       const c = ctx();
       if (!c) return;
 
-      c.fillStyle = '#2a0a0a';
-      c.fillRect(0, 0, LOGICAL_W, LOGICAL_H);
+      drawBackground(c);
 
       const [strokesRes, imagesRes, textsRes] = await Promise.all([
         supabase.from('strokes').select('*').order('created_at'),
